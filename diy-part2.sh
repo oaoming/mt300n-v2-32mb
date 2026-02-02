@@ -47,3 +47,14 @@ if [ -n "$mk_file" ]; then
 else
     echo "Error: Image Makefile not found!"
 fi
+
+# 1. 强制将 git:// 协议替换为 https://
+# 这是解决 ubus 等包下载失败的核心，因为 GitHub Actions 经常连不上 git:// 端口
+git config --global url."https://".insteadOf git://
+
+# 2. (可选) 针对 GitHub 域名的特殊处理
+git config --global url."https://github.com/".insteadOf git@github.com:
+
+# 3. 设置 OpenWrt 官方 CDN 镜像源 (作为下载失败时的备用)
+# 当源码站下载失败时，编译系统会自动尝试这个地址
+echo 'CONFIG_DOWNLOAD_MIRROR="https://downloads.openwrt.org/sources/"' >> .config
