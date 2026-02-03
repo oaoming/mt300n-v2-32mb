@@ -64,3 +64,44 @@ git config --global url."https://github.com/".insteadOf git@github.com:
 # 3. 设置 OpenWrt 官方 CDN 镜像源 (作为下载失败时的备用)
 # 当源码站下载失败时，编译系统会自动尝试这个地址
 echo 'CONFIG_DOWNLOAD_MIRROR="https://downloads.openwrt.org/sources/"' >> .config
+
+# =========================================================
+# 自动开启 ZRAM 并优化配置 (适配 128MB 内存)
+# =========================================================
+# 创建存放自动配置脚本的目录
+mkdir -p files/etc/uci-defaults
+
+# 生成自动配置脚本
+cat << 'EOF' > files/etc/uci-defaults/99-auto-zram-settings
+#!/bin/sh
+
+# 检查是否存在 zram 初始化文件，如果没安装包则直接退出，避免报错
+if [ ! -f /etc/init.d/zram ]; then
+    exit 0
+fi
+
+# 1. 清理旧配置 (同时尝试删除 匿名配置 和 命名配置，加 -q 忽略错误)
+uci -q delete system.@zram[0]
+uci -q delete system.zram
+
+# 2. 新建配置 (创建一个名为 zram 的节点)
+uci set system.zram=zram
+uci set system.zram.size_mb='64'          # 64MB 是 128MB 内存的最佳甜点
+uci set system.zram.comp_algorithm='lzo-rle'
+uci set system.zram.priority='100'        # 优先级高于 Flash swap
+
+# 3. 提交修改
+uci commit system
+
+# 4. 启用并启动服务
+# 注意：uci-defaults 运行较晚，直接 start 可能会因内核模块未加载完成报错
+# 更好的做法是 enable 它，依赖系统引导流程启动。
+# 但为了确保即时生效，可以尝试 start，失败也不影响下次重启。
+/etc/init.d/zram enable
+/etc/init.d/zram start
+
+exit 0
+EOF
+
+# 赋予脚本执行权限
+chmod +x files/etc/uci-defaults/99-auto-zram-settings
