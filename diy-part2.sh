@@ -22,17 +22,21 @@
 # GL-MT300N-V2 16MB -> 32MB Flash 适配补丁
 # =========================================================
 
-# 1. 修改设备树 (DTS) 分区大小
-# 原理：MT300N-V2 默认固件分区大小为 0xfb0000 (约16MB减去引导区)
-# 我们需要将其改为 0x1fb0000 (32MB - 引导区保留空间)
-# 使用 find 命令查找 dts 文件，兼容不同源码版本的路径差异
-dts_file=$(find target/linux/ramips/dts/ -name "*gl-mt300n-v2.dts")
+dts_file=$(find target/linux/ramips/dts/ -name "mt7628an_glinet_gl-mt300n-v2.dts" 2>/dev/null)
+
 if [ -n "$dts_file" ]; then
-    echo "Found DTS: $dts_file"
-    sed -i 's/<0xfb0000>/<0x1fb0000>/g' "$dts_file"
-    echo "DTS partition size patched to 32MB."
+    echo "1. 找到 DTS 文件: $dts_file"
+    # 之前失败是因为带了尖括号，现在直接替换数值，必定成功
+    sed -i 's/0xfb0000/0x1fb0000/g' "$dts_file"
+    
+    # 验证一下是否替换成功，输出到日志
+    if grep -q "0x1fb0000" "$dts_file"; then
+        echo "   -> DTS 修改成功！分区大小已更新为 0x1fb0000 (32MB)"
+    else
+        echo "   -> 错误：DTS 修改失败，请检查文件内容！"
+    fi
 else
-    echo "Error: DTS file not found!"
+    echo "1. 错误：未找到 DTS 文件，跳过修改！"
 fi
 
 # 2. 修改 Image Makefile 固件体积限制
