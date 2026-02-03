@@ -105,3 +105,27 @@ EOF
 
 # 赋予脚本执行权限
 chmod +x files/etc/uci-defaults/99-auto-zram-settings
+
+# =========================================================
+# 开启 I2C 接口 (MT7628 硬件 I2C)
+# =========================================================
+# 这里的 DTS_FILE 变量复用上面定义的路径
+# 如果上面没有定义，请取消下面这行的注释:
+# DTS_FILE=$(find . -name "mt7628an_glinet_gl-mt300n-v2.dts" -type f | head -n 1)
+
+if [ -n "$DTS_FILE" ]; then
+    echo "Enabling I2C in DTS..."
+    
+    # 向 DTS 文件末尾追加 I2C 启用配置
+    # &i2c 引用的是芯片原本定义的 i2c 节点
+    cat << 'EOF' >> "$DTS_FILE"
+
+&i2c {
+    status = "okay";
+};
+EOF
+
+    echo "I2C node set to 'okay'."
+else
+    echo "Error: DTS file not found for I2C patching!"
+fi
