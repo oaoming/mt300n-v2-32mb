@@ -1,6 +1,8 @@
-q
-cd openwrt
-make menuconfig
+q 
+cd openwrt 切换到目录
+make menuconfig 打开配置图形界面
+cat .config | nc termbin.com 9999  配置的config文件网页显示可以复制
+
 
 
 **English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
