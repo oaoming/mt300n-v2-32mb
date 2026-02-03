@@ -112,3 +112,44 @@ EOF
         echo "   -> [Success] I2C enabled."
     fi
 fi
+
+
+# =========================================================
+# 网络性能与速度优化设置 (适配 MT7628 + 128MB RAM)
+# =========================================================
+
+# 创建优化脚本
+cat << 'EOF' > files/etc/uci-defaults/99-network-performance
+#!/bin/sh
+
+# 1. 开启 Turbo ACC 网络加速 (Flow Offloading)
+# 对于 MT7628 这种弱 CPU，这是必选项！能显著降低 CPU 占用。
+uci set firewall.@defaults[0].flow_offloading='1'
+uci set firewall.@defaults[0].flow_offloading_hw='1' 
+# 注意：hw (硬件加速) 在某些 MT7628 驱动下可能不生效，但开启无害，系统会自动回退到软件加速。
+
+# 2. 优化连接数限制 (利用你的 128MB 大内存)
+# 默认通常只有 16384，跑 BT 容易满。改为 32768 (3万2连接数对 128MB 内存很轻松)
+echo "net.netfilter.nf_conntrack_max=32768" >> /etc/sysctl.conf
+
+# 3. 开启 BBR 拥塞控制算法 (如果内核模块已安装)
+# BBR 能显著改善高丢包环境下的网络速度 (特别是科学上网)
+# 即使没安装 kmod-tcp-bbr，写入这些也不会导致死机，只是不生效。
+echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+
+# 4. 优化 TCP Keepalive (加快死链清理)
+# 默认时间太长，缩短有助于快速释放断掉的连接
+echo "net.ipv4.tcp_keepalive_time=600" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_keepalive_intvl=30" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_keepalive_probes=5" >> /etc/sysctl.conf
+
+# 5. 提交防火墙修改
+uci commit firewall
+
+exit 0
+EOF
+
+# 赋予脚本执行权限
+chmod +x files/etc/uci-defaults/99-network-performance
+echo "Network optimization script created."
