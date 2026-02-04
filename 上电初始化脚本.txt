@@ -1,0 +1,178 @@
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+# === GL-MT300N-V2: V6.1 终极完美版 ===
+
+if ! grep -q debugfs /proc/mounts; then
+    mount -t debugfs none /sys/kernel/debug
+fi
+
+# =========================================================
+#  模块 1: 瞬时 CPU 呼吸灯 (纯Shell内核级计算，0延迟)
+# =========================================================
+start_cpu_led() {
+    LED_DIR="/sys/class/leds/green:wan"
+    PID_FILE="/var/run/cpu_led_monitor.pid"
+
+    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then return; fi
+    
+    (
+        echo timer > "$LED_DIR/trigger"
+        last_delay=0
+        
+        # 第一次读取内核数据
+        read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
+        prev_idle=$((idle + iowait))
+        prev_total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+        while true; do
+            # 1秒刷新一次 (想要更灵敏可改为 sleep 0.5)
+            sleep 1
+            
+            # 第二次读取内核数据
+            read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
+            curr_idle=$((idle + iowait))
+            curr_total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+            
+            # 计算这一秒内的差值
+            diff_idle=$((curr_idle - prev_idle))
+            diff_total=$((curr_total - prev_total))
+            
+            # 更新基准
+            prev_idle=$curr_idle
+            prev_total=$curr_total
+            
+            # 计算百分比 (防止分母为0)
+            if [ "$diff_total" -eq 0 ]; then diff_total=1; fi
+            cpu_usage=$((100 * (diff_total - diff_idle) / diff_total))
+            
+            # --- 根据 CPU 使用率调整闪烁速度 ---
+            if [ "$cpu_usage" -lt 10 ]; then
+                new_delay=1000  # <10%: 慢呼吸 (空闲)
+            elif [ "$cpu_usage" -lt 50 ]; then
+                new_delay=300   # 10-50%: 欢快闪 (看网页)
+            else
+                new_delay=50    # >50%: 狂闪 (满载/测速)
+            fi
+            
+            if [ "$new_delay" -ne "$last_delay" ]; then
+                echo "$new_delay" > "$LED_DIR/delay_on"
+                echo "$new_delay" > "$LED_DIR/delay_off"
+                last_delay=$new_delay
+            fi
+        done
+    ) &
+    echo $! > "$PID_FILE"
+}
+
+start_cpu_led
+
+
+# =========================================================
+#  模块 2: 智能看门狗 (左侧保留WiFi模式)
+# =========================================================
+(
+    # 开机等待20秒，防止与系统启动冲突
+    sleep 20
+    
+    # 状态缓存 (-1:初始化, 0:纯净WiFi, 1:全功能)
+    STATE_LAST_MODE="-1"
+    
+    log_msg() { logger -t "Watchdog" "$1"; }
+
+    # 检测代理核心进程
+    check_passwall_process() {
+        if pgrep -f "bin/xray" >/dev/null 2>&1 || \
+           pgrep -f "bin/v2ray" >/dev/null 2>&1 || \
+           pgrep -f "bin/sing-box" >/dev/null 2>&1 || \
+           pgrep -f "bin/hysteria" >/dev/null 2>&1; then
+            return 0
+        else
+            return 1
+        fi
+    }
+
+    while true; do
+        SLEEP_TIME=5
+
+        # 读取物理开关 (BTN_0 lo = 右边/开启)
+        if cat /sys/kernel/debug/gpio | grep "BTN_0" | grep -q "lo"; then
+            SWITCH_ON=1
+        else
+            SWITCH_ON=0
+        fi
+
+        # === 右边：全功能模式 (Travelmate + Passwall) ===
+        if [ "$SWITCH_ON" -eq 1 ]; then
+            
+            # 1. 切换状态：开启服务
+            if [ "$STATE_LAST_MODE" != "1" ]; then
+                log_msg "Switch RIGHT -> Starting Full Services..."
+                
+                # 确保 WiFi 开启
+                if [ "$(uci get wireless.radio0.disabled 2>/dev/null)" != "0" ]; then
+                    uci set wireless.radio0.disabled="0"
+                    uci commit wireless
+                    wifi reload
+                fi
+                
+                # 启动 Travelmate
+                [ -x /etc/init.d/travelmate ] && /etc/init.d/travelmate enable && /etc/init.d/travelmate start
+                
+                STATE_LAST_MODE="1"
+                sleep 10
+            fi
+
+            # 2. 守护进程：检查 Passwall (仅在时间正确时)
+            if [ "$(date +%Y)" -ge 2024 ]; then
+                if ! check_passwall_process; then
+                    log_msg "Passwall died. Re-initializing..."
+                    
+                    # 内存清理 (防OOM)
+                    sync
+                    echo 3 > /proc/sys/vm/drop_caches
+                    sleep 1
+                    
+                    # 稳妥重启
+                    /etc/init.d/passwall stop
+                    sleep 2
+                    /etc/init.d/passwall start
+                    
+                    sleep 20
+                else
+                    # 正常运行中，休眠30秒
+                    SLEEP_TIME=30
+                fi
+            else
+                # 时间不对，后台尝试同步
+                ntpd -n -q -p ntp.aliyun.com >/dev/null 2>&1 &
+            fi
+
+        # === 左边：纯净WiFi模式 (仅保留 WiFi) ===
+        else
+            if [ "$STATE_LAST_MODE" != "0" ]; then
+                log_msg "Switch LEFT -> Pure WiFi Mode..."
+                
+                # 停止 科学上网 & 自动中继
+                [ -x /etc/init.d/passwall ] && /etc/init.d/passwall stop
+                [ -x /etc/init.d/travelmate ] && /etc/init.d/travelmate stop
+                
+                # 强制开启 WiFi (给手机连)
+                uci set wireless.radio0.disabled="0"
+                uci commit wireless
+                
+                # 刷新网络 (这会断开Travelmate连接的上级路由，变回本地AP)
+                wifi reload
+                
+                STATE_LAST_MODE="0"
+            fi
+            
+            # 左侧模式很稳定，10秒检测一次即可
+            SLEEP_TIME=10
+        fi
+
+        sleep "$SLEEP_TIME"
+    done
+) &
+
+exit 0
